@@ -186,33 +186,12 @@ class Dispatcher:
             current_process = self.scheduler.next()
             
             if current_process:
-                # 3. Fase de Execução e Alocação de I/O
+                # 3. Fase de Execução
                 if self.resources.request(current_process):
-                
-                    # 3.5 Operações de Disco
-                    # Busca operações pendentes do processo atual e executa
-                    #ops_to_run = [op for op in self.file_operations if op['pid'] == current_process.pid]
-                    #for op in ops_to_run:
-                    for op in self.file_operations[:]:
-                        # Verifica se o PID da operação existe na tabela de processos (checagem de sanidade)
-                        process_exists = any(p.pid == op['pid'] for p in self.processes)
-
-                        if not process_exists:
-                            print(f"Operação => Falha: O processo {op['pid']} não existe.")
-                            self.file_operations.remove(op)
-                            continue
-                        else:
-                            if op['opcode'] == 0:
-                                self.file_system.create(current_process, op['filename'], op['blocks'])
-                            elif op['opcode'] == 1:
-                                self.file_system.delete(current_process, op['filename'])
-                        # Remove a operação da lista global para não executar novamente no próximo tick
-                        self.file_operations.remove(op)
-
                     # Acesso à memória por instrução
                     if current_process.program_counter < len(current_process.reference_string):
                         current_page = current_process.reference_string[current_process.program_counter]
-                        hit = self.memory.access_page(current_process, current_page)
+                        self.memory.access_page(current_process, current_page)
 
                     current_process.program_counter += 1
                     current_process.cpu_time -= 1
@@ -227,12 +206,28 @@ class Dispatcher:
                     else:
                         self.scheduler.preempt(current_process)
                 else:
-                    # Bloqueio de I/O
                     self.scheduler.preempt(current_process)
             
-            # 5. Fase de Manutenção
             self.scheduler.update_wait_times_and_age()
             tick += 1
+
+        # --- Bloco de Relatório do Sistema de Arquivos (Pós-Execução) ---
+        print("\nSistema de arquivos =>")
+        for i, op in enumerate(self.file_operations, 1):
+            print(f"Operação {i} =>", end=" ")
+            
+            # Verifica se o processo existe
+            process = next((p for p in self.processes if p.pid == op['pid']), None)
+            
+            if not process:
+                print("Falha\nO processo " + str(op['pid']) + " não existe.")
+            else:
+                success = False
+                if op['opcode'] == 0:
+                    success = self.file_system.create(process, op['filename'], op['blocks'])
+                else:
+                    success = self.file_system.delete(process, op['filename'])
+                print("Sucesso" if success else "Falha")
 
         # Relatórios Finais
         self.file_system.print_disk_map()
