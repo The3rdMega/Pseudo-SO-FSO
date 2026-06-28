@@ -157,7 +157,7 @@ class Dispatcher:
         print("dispatcher =>")
         print(f"PID: {process.pid}")
         print(f"prioridade: {process.priority}")
-        print(f"páginas alocadas: {process.allocated_frames}")
+        print(f"páginas alocadas: {process.max_working_set}")
         print(f"impressora: {usa_impressora}")
         print(f"scanner: {usa_scanner}")
         print(f"drives: {usa_drive}")
@@ -191,12 +191,21 @@ class Dispatcher:
                 
                     # 3.5 Operações de Disco
                     # Busca operações pendentes do processo atual e executa
-                    ops_to_run = [op for op in self.file_operations if op['pid'] == current_process.pid]
-                    for op in ops_to_run:
-                        if op['opcode'] == 0:
-                            self.file_system.create(current_process, op['filename'], op['blocks'])
-                        elif op['opcode'] == 1:
-                            self.file_system.delete(current_process, op['filename'])
+                    #ops_to_run = [op for op in self.file_operations if op['pid'] == current_process.pid]
+                    #for op in ops_to_run:
+                    for op in self.file_operations[:]:
+                        # Verifica se o PID da operação existe na tabela de processos (checagem de sanidade)
+                        process_exists = any(p.pid == op['pid'] for p in self.processes)
+
+                        if not process_exists:
+                            print(f"Operação => Falha: O processo {op['pid']} não existe.")
+                            self.file_operations.remove(op)
+                            continue
+                        else:
+                            if op['opcode'] == 0:
+                                self.file_system.create(current_process, op['filename'], op['blocks'])
+                            elif op['opcode'] == 1:
+                                self.file_system.delete(current_process, op['filename'])
                         # Remove a operação da lista global para não executar novamente no próximo tick
                         self.file_operations.remove(op)
 
