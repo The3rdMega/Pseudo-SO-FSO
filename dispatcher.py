@@ -20,7 +20,8 @@ Lê e interpreta os três arquivos passados via linha de comando (processes.txt,
 garantindo que cada processo inicie com o PID correto (a partir de 0) e que receba sua
 respectiva string de requisição de memória (pages).
 
-- Inicializa o tamanho total do Disco no FileSystem.
+- Inicializa o tamanho total do Disco no FileSystem, pré-aloca segmentos já ocupados
+e enfileira as operações de I/O de disco para cada processo.
 
 3. CICLO DE MÁQUINA (Loop de Execução Principal)
 Implementa o laço que simula o relógio do sistema (clock) e o quantum de execução (1ms).
@@ -49,7 +50,7 @@ from process import Process
 from scheduler import Scheduler
 from memory_manager import MemoryManager
 from resource_manager import ResourceManager
-from file_system import FileSystem
+from file_system import FileSystem, File
 
 class Dispatcher:
     """O primeiro processo criado, responsável por inicializar recursos, exibir mensagens e gerenciar a execução."""
@@ -61,8 +62,9 @@ class Dispatcher:
         self.resources = ResourceManager()
         self.file_system = None 
         
-        # Lista global que atua como a Tabela de Processos do sistema.
+        # Estruturas de controle do sistema
         self.processes: list[Process] = []
+        self.file_operations: list[dict] = [] # Fila de operações de disco
 
     def load_inputs(self, proc_path: str, files_path: str, string_path: str) -> None:
         """Coordena a fase de boot, lendo todos os arquivos de entrada necessários para a simulação."""
@@ -73,47 +75,31 @@ class Dispatcher:
     def _load_processes_and_strings(self, proc_file: Path, string_file: Path) -> None:
         """
         Lê os arquivos de definição de processos e strings de referência de memória.
-        Realiza a leitura em paralelo para garantir que a string de acesso a páginas
-        seja vinculada ao Process Control Block (PCB) correto.
         """
         if not proc_file.exists() or not string_file.exists():
             raise FileNotFoundError("Arquivo processes.txt ou string.txt não encontrado.")
 
         with proc_file.open('r') as pf, string_file.open('r') as sf:
-            # O enumerate garante que o PID sempre inicie em 0 automaticamente.
             for pid, (proc_line, string_line) in enumerate(zip(pf, sf)):
                 proc_line = proc_line.strip()
                 string_line = string_line.strip()
                 
-                # Ignora linhas em branco para evitar falhas de segmentação ou parsing.
                 if not proc_line:
                     continue
 
-                # Faz o parsing dos atributos do processo separados por vírgula.
                 data = [int(x.strip()) for x in proc_line.split(',')]
-                
-                # Faz o parsing das requisições de página. Retorna lista vazia se não houver string.
                 ref_string = [int(x.strip()) for x in string_line.split(',')] if string_line else []
 
-                # Instancia o PCB contendo as métricas de CPU e requisições de E/S.
                 process = Process(
-                    pid=pid,
-                    init_time=data[0],
-                    priority=data[1],
-                    cpu_time=data[2],
-                    max_working_set=data[3],
-                    printer_req=data[4],
-                    scanner_req=data[5],
-                    modem_req=data[6],
-                    sata_req=data[7],
-                    reference_string=ref_string
+                    pid=pid, init_time=data[0], priority=data[1], cpu_time=data[2],
+                    max_working_set=data[3], printer_req=data[4], scanner_req=data[5],
+                    modem_req=data[6], sata_req=data[7], reference_string=ref_string
                 )
                 self.processes.append(process)
 
     def _load_file_system(self, files_file: Path) -> None:
         """
-        Realiza a leitura das configurações iniciais do disco.
-        Lê a quantidade de blocos totais e prepara o sistema de arquivos.
+        Realiza a leitura das configurações iniciais do disco e enfileira as operações de arquivos.
         """
         if not files_file.exists():
             raise FileNotFoundError("Arquivo files.txt não encontrado.")
@@ -124,34 +110,67 @@ class Dispatcher:
             if not lines:
                 return
 
-            # A primeira linha obrigatoriamente dita o limite do hardware de disco.
+            # Linha 1: Limite do hardware de disco
             total_blocks = int(lines[0])
             self.file_system = FileSystem(total_blocks)
             
-            # TODO: Implementar a extração dos segmentos ocupados (linha 2)
-            # e carregar as operações de criação/deleção (linhas subsequentes).
+            # Linha 2: Quantidade de segmentos pré-ocupados
+            num_occupied = int(lines[1])
+            current_line = 2
+            
+            # Carrega os segmentos pré-ocupados (Arquivos do Sistema/Base)
+            for _ in range(num_occupied):
+                if current_line < len(lines):
+                    parts = [p.strip() for p in lines[current_line].split(',')]
+                    name = parts[0]
+                    start_block = int(parts[1])
+                    num_blocks = int(parts[2])
+                    
+                    # Força a alocação direta no disco. PID -1 representa arquivo do sistema (sem dono)
+                    for i in range(start_block, start_block + num_blocks):
+                        self.file_system.disk[i] = name
+                    self.file_system.files.append(File(name, start_block, num_blocks, -1))
+                    
+                    current_line += 1
+
+            # Carrega as operações requisitadas pelos processos
+            while current_line < len(lines):
+                parts = [p.strip() for p in lines[current_line].split(',')]
+                pid = int(parts[0])
+                opcode = int(parts[1]) # 0 = Criar, 1 = Deletar
+                filename = parts[2]
+                blocks = int(parts[3]) if len(parts) > 3 else 0
+                
+                self.file_operations.append({
+                    'pid': pid,
+                    'opcode': opcode,
+                    'filename': filename,
+                    'blocks': blocks
+                })
+                current_line += 1
 
     def _print_process_creation(self, process: Process) -> None:
-        """ Método Auxiliar """
-        # Exibe as informações do processo no momento exato em que ele é despachado
+        """ Método Auxiliar de log de inicialização conforme especificação """
+        
+        # Converte a quantidade (int) para booleano (bool) conforme exigência do PDF
+        usa_impressora = bool(process.printer_req > 0)
+        usa_scanner = bool(process.scanner_req > 0)
+        usa_modem = bool(process.modem_req > 0)
+        usa_drive = bool(process.sata_req > 0)
+
         print("dispatcher =>")
         print(f"PID: {process.pid}")
-        print(f"frames: {process.max_working_set}")
-        print(f"priority: {process.priority}")
-        print(f"time: {process.cpu_time}")
-        print(f"printers: {process.printer_req}")
-        print(f"scanners: {process.scanner_req}")
-        print(f"modems: {process.modem_req}")
-        print(f"drives: {process.sata_req}")
+        print(f"prioridade: {process.priority}")
+        print(f"páginas alocadas: {process.allocated_frames}") # Pré-carga de memória
+        print(f"impressora: {usa_impressora}")
+        print(f"scanner: {usa_scanner}")
+        print(f"modem: {usa_modem}")
+        print(f"drives: {usa_drive}")
         print(f"process {process.pid} =>")
         print(f"P{process.pid} STARTED")
 
     def run(self) -> None:
-        """
-        Loop principal de execução (Main Clock).
-        Responsável por orquestrar a passagem do tempo (quantum),
-        acionar o escalonador e solicitar recursos/memória.
-        """
+        """ Loop principal de execução (Main Clock). """
         
         print(f"Total de processos carregados: {len(self.processes)}")
         
@@ -159,65 +178,65 @@ class Dispatcher:
         completed_processes = 0
         total_processes = len(self.processes)
         
-        # O laço principal roda até que todos os processos tenham concluído seu tempo de CPU
         while completed_processes < total_processes:
             
-            # 1. Fase de Admissão: Verifica quais processos "nascem" neste exato milissegundo
+            # 1. Fase de Admissão
             for p in self.processes:
                 if p.init_time == tick:
-                    self.memory.preload(p) # Aplica a pré-carga da primeira página antes de ir para a fila
+                    self.memory.preload(p) 
                     self._print_process_creation(p)
                     self.scheduler.admit(p)
             
-            # 2. Fase de Escalonamento: Pergunta ao Scheduler quem deve usar a CPU
+            # 2. Fase de Escalonamento
             current_process = self.scheduler.next()
             
             if current_process:
                 # 3. Fase de Execução e Alocação de I/O
-                # Tenta garantir uso exclusivo dos recursos antes de rodar a instrução
                 if self.resources.request(current_process):
                 
-                    # Verifica se ainda há páginas na string de referência para a instrução atual
+                    # 3.5 Operações de Disco
+                    # Busca operações pendentes do processo atual e executa
+                    ops_to_run = [op for op in self.file_operations if op['pid'] == current_process.pid]
+                    for op in ops_to_run:
+                        if op['opcode'] == 0:
+                            self.file_system.create(current_process, op['filename'], op['blocks'])
+                        elif op['opcode'] == 1:
+                            self.file_system.delete(current_process, op['filename'])
+                        # Remove a operação da lista global para não executar novamente no próximo tick
+                        self.file_operations.remove(op)
+
+                    # Acesso à memória por instrução
                     if current_process.program_counter < len(current_process.reference_string):
                         current_page = current_process.reference_string[current_process.program_counter]
-                        
-                        # Solicita o acesso à página no MemoryManager
                         hit = self.memory.access_page(current_process, current_page)
 
-                    # O processo avança independentemente de page fault
                     current_process.program_counter += 1
                     current_process.cpu_time -= 1
                     print(f"P{current_process.pid} instruction {current_process.program_counter}")
                     
                     # 4. Fase de Finalização ou Preempção
                     if current_process.cpu_time <= 0:
-                        # O processo terminou sua execução
                         print(f"P{current_process.pid} return SIGINT")
                         self.memory.free_process(current_process)
-                        self.resources.release(current_process) # Libera impressoras, scanners, etc.
+                        self.resources.release(current_process) 
                         completed_processes += 1
                     else:
-                        # O processo não terminou, mas o quantum de 1ms esgotou
-                        # Ele sofre preempção e volta para a fila correspondente
                         self.scheduler.preempt(current_process)
                 else:
-                    # Bloqueio de I/O: Processo sofre preempção imediata por falta de recursos.
-                    # Ele cede a vez e não gasta seu cpu_time neste tick.
+                    # Bloqueio de I/O
                     self.scheduler.preempt(current_process)
             
-            # 5. Fase de Manutenção: Incrementa a espera nas filas e checa starvation
+            # 5. Fase de Manutenção
             self.scheduler.update_wait_times_and_age()
-            
-            # Avança o relógio global do pseudo-SO
             tick += 1
 
-        # Quando todos terminarem, exibe o relatório final exigido pela especificação
+        # Relatórios Finais
+        self.file_system.print_disk_map()
         print("\nNúmero de Faltas de Páginas por processo:")
         for p in self.processes:
             print(f"P{p.pid} = {p.page_faults} faltas de páginas")
 
 if __name__ == "__main__":
-    # Valida a passagem de argumentos via linha de comando.
     if len(sys.argv) != 4:
         print("Uso: python dispatcher.py <processes.txt> <files.txt> <string.txt>")
         sys.exit(1)
