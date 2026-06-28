@@ -165,6 +165,7 @@ class Dispatcher:
             # 1. Fase de Admissão: Verifica quais processos "nascem" neste exato milissegundo
             for p in self.processes:
                 if p.init_time == tick:
+                    self.memory.preload(p) # Aplica a pré-carga da primeira página antes de ir para a fila
                     self._print_process_creation(p)
                     self.scheduler.admit(p)
             
@@ -173,6 +174,18 @@ class Dispatcher:
             
             if current_process:
                 # 3. Fase de Execução: O processo ganha 1ms de CPU (1 instrução)
+                # Verifica se ainda há páginas na string de referência para a instrução atual
+                if current_process.program_counter < len(current_process.reference_string):
+                    current_page = current_process.reference_string[current_process.program_counter]
+                    
+                    # Solicita o acesso à página no MemoryManager
+                    hit = self.memory.access_page(current_process, current_page)
+
+                    # Opcional: imprimir o page fault para facilitar o debug visual
+                    # if not hit:
+                    #     print(f"P{current_process.pid} PAGE FAULT na página {current_page}")
+
+                # O processo avança independentemente de page fault
                 current_process.program_counter += 1
                 current_process.cpu_time -= 1
                 print(f"P{current_process.pid} instruction {current_process.program_counter}")
@@ -192,6 +205,11 @@ class Dispatcher:
             
             # Avança o relógio global do pseudo-SO
             tick += 1
+
+        # Quando todos terminarem, exibe o relatório final exigido pela especificação
+        print("\nNúmero de Faltas de Páginas por processo:")
+        for p in self.processes:
+            print(f"P{p.pid} = {p.page_faults} faltas de páginas")
 
 if __name__ == "__main__":
     # Valida a passagem de argumentos via linha de comando.
