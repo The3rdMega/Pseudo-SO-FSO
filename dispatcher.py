@@ -150,21 +150,16 @@ class Dispatcher:
                 current_line += 1
 
     def _print_process_creation(self, process: Process) -> None:
-        """ Método Auxiliar de log de inicialização conforme especificação """
-        
-        # Converte a quantidade (int) para booleano (bool) conforme exigência do PDF
         usa_impressora = bool(process.printer_req > 0)
         usa_scanner = bool(process.scanner_req > 0)
-        usa_modem = bool(process.modem_req > 0)
         usa_drive = bool(process.sata_req > 0)
 
         print("dispatcher =>")
         print(f"PID: {process.pid}")
         print(f"prioridade: {process.priority}")
-        print(f"páginas alocadas: {process.allocated_frames}") # Pré-carga de memória
+        print(f"páginas alocadas: {process.allocated_frames}")
         print(f"impressora: {usa_impressora}")
         print(f"scanner: {usa_scanner}")
-        print(f"modem: {usa_modem}")
         print(f"drives: {usa_drive}")
         print(f"process {process.pid} =>")
         print(f"P{process.pid} STARTED")
