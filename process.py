@@ -13,6 +13,7 @@ class Process:
     scanner_req: int
     modem_req: int
     sata_req: int
+    wait_time: int  # Adicionado para detecção dinâmica de starvation
     
     # Atributos dinâmicos gerenciados durante a execução
     reference_string: List[int] = field(default_factory=list)
