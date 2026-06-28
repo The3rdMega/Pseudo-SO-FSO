@@ -173,31 +173,36 @@ class Dispatcher:
             current_process = self.scheduler.next()
             
             if current_process:
-                # 3. Fase de Execução: O processo ganha 1ms de CPU (1 instrução)
-                # Verifica se ainda há páginas na string de referência para a instrução atual
-                if current_process.program_counter < len(current_process.reference_string):
-                    current_page = current_process.reference_string[current_process.program_counter]
-                    
-                    # Solicita o acesso à página no MemoryManager
-                    hit = self.memory.access_page(current_process, current_page)
-
-                    # Opcional: imprimir o page fault para facilitar o debug visual
-                    # if not hit:
-                    #     print(f"P{current_process.pid} PAGE FAULT na página {current_page}")
-
-                # O processo avança independentemente de page fault
-                current_process.program_counter += 1
-                current_process.cpu_time -= 1
-                print(f"P{current_process.pid} instruction {current_process.program_counter}")
+                # 3. Fase de Execução e Alocação de I/O
+                # Tenta garantir uso exclusivo dos recursos antes de rodar a instrução
+                if self.resources.request(current_process):
                 
-                # 4. Fase de Finalização ou Preempção
-                if current_process.cpu_time <= 0:
-                    # O processo terminou sua execução
-                    print(f"P{current_process.pid} return SIGINT")
-                    completed_processes += 1
+                    # Verifica se ainda há páginas na string de referência para a instrução atual
+                    if current_process.program_counter < len(current_process.reference_string):
+                        current_page = current_process.reference_string[current_process.program_counter]
+                        
+                        # Solicita o acesso à página no MemoryManager
+                        hit = self.memory.access_page(current_process, current_page)
+
+                    # O processo avança independentemente de page fault
+                    current_process.program_counter += 1
+                    current_process.cpu_time -= 1
+                    print(f"P{current_process.pid} instruction {current_process.program_counter}")
+                    
+                    # 4. Fase de Finalização ou Preempção
+                    if current_process.cpu_time <= 0:
+                        # O processo terminou sua execução
+                        print(f"P{current_process.pid} return SIGINT")
+                        self.memory.free_process(current_process)
+                        self.resources.release(current_process) # Libera impressoras, scanners, etc.
+                        completed_processes += 1
+                    else:
+                        # O processo não terminou, mas o quantum de 1ms esgotou
+                        # Ele sofre preempção e volta para a fila correspondente
+                        self.scheduler.preempt(current_process)
                 else:
-                    # O processo não terminou, mas o quantum de 1ms esgotou
-                    # Ele sofre preempção e volta para a fila correspondente
+                    # Bloqueio de I/O: Processo sofre preempção imediata por falta de recursos.
+                    # Ele cede a vez e não gasta seu cpu_time neste tick.
                     self.scheduler.preempt(current_process)
             
             # 5. Fase de Manutenção: Incrementa a espera nas filas e checa starvation
