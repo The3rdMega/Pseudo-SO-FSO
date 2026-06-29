@@ -57,75 +57,61 @@ class FileSystem:
                 return f
         return None
 
-    def create(self, process: Process, name: str, blocks: int) -> bool:
+    def create(self, process: Process, name: str, blocks: int) -> tuple:
+        """Retorna (success: bool, start_block: int). start_block é -1 em caso de falha."""
         # Verifica se um arquivo com o mesmo nome já existe para evitar colisão
         if self._get_file(name):
-            print(f"Sistema de Arquivos => Falha: Arquivo '{name}' já existe.")
-            return False
-            
+            return (False, -1)
+
         # Algoritmo First-Fit: Busca espaço contíguo a partir do primeiro bloco (índice 0)
         consecutive_free = 0
         start_index = -1
-        
+
         for i in range(self.total_blocks):
             if self.disk[i] == 0:
                 # Marca o início de uma potencial lacuna contígua
                 if consecutive_free == 0:
                     start_index = i
                 consecutive_free += 1
-                
+
                 # Se a lacuna for grande o suficiente, realiza a alocação
                 if consecutive_free == blocks:
                     # Preenche o disco com o identificador (nome) do arquivo
                     for j in range(start_index, start_index + blocks):
                         self.disk[j] = name
-                        
+
                     # Registra os metadados do arquivo
-                    new_file = File(name, start_index, blocks, process.pid)
-                    self.files.append(new_file)
-                    print(f"Sistema de Arquivos => Processo P{process.pid} criou '{name}' (blocos {start_index} a {start_index + blocks - 1}).")
-                    return True
+                    self.files.append(File(name, start_index, blocks, process.pid))
+                    return (True, start_index)
             else:
                 # O bloco está ocupado. Reseta o contador contíguo.
                 consecutive_free = 0
-                
-        # Varredura completa: Não encontrou espaço contíguo suficiente
-        print(f"Sistema de Arquivos => Falha: Processo P{process.pid} não pôde criar '{name}'. Falta de espaço contíguo.")
-        return False
 
-    def delete(self, process: Process, name: str) -> bool:
+        # Varredura completa: Não encontrou espaço contíguo suficiente
+        return (False, -1)
+
+    def delete(self, process: Process, name: str) -> tuple:
+        """Retorna (success: bool, reason: str). reason é '' em caso de sucesso,
+        'not_found' se o arquivo não existe, 'permission' se negado por permissão."""
         file_to_delete = self._get_file(name)
-        
+
         if not file_to_delete:
-            print(f"Sistema de Arquivos => Falha: Arquivo '{name}' não encontrado para deleção.")
-            return False
-            
+            return (False, 'not_found')
+
         # Validação de Permissões
         # Processos de tempo real (is_real_time) ignoram a verificação de dono
         if not process.is_real_time() and file_to_delete.owner_pid != process.pid:
-            print(f"Sistema de Arquivos => Falha: Processo P{process.pid} negado. Não possui permissão para deletar '{name}'.")
-            return False
-            
+            return (False, 'permission')
+
         # Deleção Autorizada: Limpa o espaço físico no disco (substitui por 0)
         for i in range(file_to_delete.start_block, file_to_delete.start_block + file_to_delete.num_blocks):
             self.disk[i] = 0
-            
+
         # Remove os metadados da tabela de arquivos
         self.files.remove(file_to_delete)
-        print(f"Sistema de Arquivos => Processo P{process.pid} deletou '{name}'.")
-        return True
+        return (True, '')
 
     def print_disk_map(self) -> None:
         # Exibição do relatório final conforme exigência da especificação
-        print("\nMapa do Disco:")
-        
-        # Formata o array para exibição mais limpa caso tenha muitos blocos
-        # Ex: [0, 0, 'A', 'A', 'B', 0, 0]
-        formatted_disk = []
-        for block in self.disk:
-            if block == 0:
-                formatted_disk.append(0)
-            else:
-                formatted_disk.append(block)
-                
-        print(formatted_disk)
+        print("\nMapa de ocupação do disco:")
+        print(' '.join(str(block) for block in self.disk))

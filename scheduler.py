@@ -144,6 +144,18 @@ class Scheduler:
                     # Não sofreu starvation, devolve para a mesma fila
                     queue.append(proc)
             
+    def requeue(self, process: Process) -> None:
+        """Devolve o processo à fila SEM rebaixar prioridade (usado em bloqueio de I/O)."""
+        if process.is_real_time():
+            self.real_time_queue.appendleft(process)
+            return
+        queue_index = min(max(process.priority - 1, 0), 2)
+        self.user_queues[queue_index].append(process)
+
+    def complete(self, process: Process) -> None:
+        """Notifica o escalonador que o processo terminou, liberando sua vaga na contagem global."""
+        self._current_count -= 1
+
     def has_processes(self) -> bool:
         # Verifica se ainda há algum processo aguardando escalonamento
         if self.real_time_queue:

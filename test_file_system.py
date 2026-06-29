@@ -28,8 +28,8 @@ class TestFileSystem(unittest.TestCase):
     def test_create_first_fit(self):
         """Valida se a alocação inicial preenche o disco a partir do bloco 0."""
         result = self.fs.create(self.p_user1, "A.txt", 3)
-        
-        self.assertTrue(result)
+
+        self.assertTrue(result[0])
         self.assertEqual(self.fs.disk[0:3], ["A.txt", "A.txt", "A.txt"])
         self.assertEqual(self.fs.disk[3], 0)
 
@@ -54,8 +54,8 @@ class TestFileSystem(unittest.TestCase):
         
         # Restam apenas 2 blocos livres no final. Pedir 3 deve falhar.
         result = self.fs.create(self.p_user2, "B.txt", 3)
-        
-        self.assertFalse(result)
+
+        self.assertFalse(result[0])
 
     def test_delete_permission_user_denied(self):
         """Valida se um usuário é bloqueado ao tentar deletar arquivo de outro PID."""
@@ -63,8 +63,8 @@ class TestFileSystem(unittest.TestCase):
         
         # P2 tenta deletar arquivo de P1
         result = self.fs.delete(self.p_user2, "A.txt")
-        
-        self.assertFalse(result)
+
+        self.assertFalse(result[0])
         self.assertEqual(self.fs.disk[0], "A.txt") # Arquivo permanece intacto
 
     def test_delete_permission_rt_allowed(self):
@@ -73,8 +73,8 @@ class TestFileSystem(unittest.TestCase):
         
         # Tempo Real tenta deletar arquivo de P1
         result = self.fs.delete(self.p_rt, "A.txt")
-        
-        self.assertTrue(result)
+
+        self.assertTrue(result[0])
         self.assertEqual(self.fs.disk[0], 0) # Arquivo foi deletado com sucesso
 
 if __name__ == '__main__':
