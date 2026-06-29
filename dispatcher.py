@@ -68,7 +68,6 @@ class Dispatcher:
 
     def load_inputs(self, proc_path: str, files_path: str, string_path: str) -> None:
         """Coordena a fase de boot, lendo todos os arquivos de entrada necessários para a simulação."""
-        print("dispatcher => Inicializando o sistema e lendo arquivos...")
         self._load_processes_and_strings(Path(proc_path), Path(string_path))
         self._load_file_system(Path(files_path))
 
@@ -150,41 +149,45 @@ class Dispatcher:
                 current_line += 1
 
     def _print_process_creation(self, process: Process) -> None:
-        usa_impressora = bool(process.printer_req > 0)
-        usa_scanner = bool(process.scanner_req > 0)
-        usa_drive = bool(process.sata_req > 0)
-
         print("dispatcher =>")
-        print(f"PID: {process.pid}")
-        print(f"prioridade: {process.priority}")
-        print(f"páginas alocadas: {process.max_working_set}")
-        print(f"impressora: {usa_impressora}")
-        print(f"scanner: {usa_scanner}")
-        print(f"drives: {usa_drive}")
+        print(f" PID: {process.pid}")
+        print(f" frames: {process.max_working_set}")
+        print(f" priority: {process.priority}")
+        print(f" time: {process.cpu_time}")
+        print(f" printers: {int(process.printer_req > 0)}")
+        print(f" scanners: {int(process.scanner_req > 0)}")
+        print(f" modems: {int(process.modem_req > 0)}")
+        print(f" drives: {int(process.sata_req > 0)}")
         print(f"process {process.pid} =>")
         print(f"P{process.pid} STARTED")
 
+    @staticmethod
+    def _format_block_list(start_block: int, num_blocks: int) -> str:
+        """Formata a lista de blocos no padrão 'blocos 0, 1 e 2'."""
+        blocks = list(range(start_block, start_block + num_blocks))
+        if len(blocks) == 1:
+            return f"bloco {blocks[0]}"
+        body = ', '.join(str(b) for b in blocks[:-1])
+        return f"blocos {body} e {blocks[-1]}"
+
     def run(self) -> None:
         """ Loop principal de execução (Main Clock). """
-        
-        print(f"Total de processos carregados: {len(self.processes)}")
-        
         tick = 0
         completed_processes = 0
         total_processes = len(self.processes)
-        
+
         while completed_processes < total_processes:
-            
+
             # 1. Fase de Admissão
             for p in self.processes:
                 if p.init_time == tick:
-                    self.memory.preload(p) 
+                    self.memory.preload(p)
                     self._print_process_creation(p)
                     self.scheduler.admit(p)
-            
+
             # 2. Fase de Escalonamento
             current_process = self.scheduler.next()
-            
+
             if current_process:
                 # 3. Fase de Execução
                 if self.resources.request(current_process):
@@ -196,38 +199,52 @@ class Dispatcher:
                     current_process.program_counter += 1
                     current_process.cpu_time -= 1
                     print(f"P{current_process.pid} instruction {current_process.program_counter}")
-                    
+
                     # 4. Fase de Finalização ou Preempção
                     if current_process.cpu_time <= 0:
                         print(f"P{current_process.pid} return SIGINT")
                         self.memory.free_process(current_process)
-                        self.resources.release(current_process) 
+                        self.resources.release(current_process)
+                        self.scheduler.complete(current_process)
                         completed_processes += 1
                     else:
                         self.scheduler.preempt(current_process)
                 else:
-                    self.scheduler.preempt(current_process)
-            
+                    # Recursos indisponíveis: devolve à mesma fila sem rebaixar prioridade
+                    self.scheduler.requeue(current_process)
+
             self.scheduler.update_wait_times_and_age()
             tick += 1
 
         # --- Bloco de Relatório do Sistema de Arquivos (Pós-Execução) ---
         print("\nSistema de arquivos =>")
         for i, op in enumerate(self.file_operations, 1):
-            print(f"Operação {i} =>", end=" ")
-            
             # Verifica se o processo existe
             process = next((p for p in self.processes if p.pid == op['pid']), None)
-            
+
             if not process:
-                print("Falha\nO processo " + str(op['pid']) + " não existe.")
-            else:
-                success = False
-                if op['opcode'] == 0:
-                    success = self.file_system.create(process, op['filename'], op['blocks'])
+                print(f"Operação {i} => Falha")
+                print(f"O processo {op['pid']} não existe.")
+            elif op['opcode'] == 0:
+                success, start_block = self.file_system.create(process, op['filename'], op['blocks'])
+                if success:
+                    print(f"Operação {i} => Sucesso")
+                    block_str = self._format_block_list(start_block, op['blocks'])
+                    print(f"O processo {op['pid']} criou o arquivo {op['filename']} ({block_str}).")
                 else:
-                    success = self.file_system.delete(process, op['filename'])
-                print("Sucesso" if success else "Falha")
+                    print(f"Operação {i} => Falha")
+                    print(f"O processo {op['pid']} não pode criar o arquivo {op['filename']} (falta de espaço).")
+            else:
+                success, reason = self.file_system.delete(process, op['filename'])
+                if success:
+                    print(f"Operação {i} => Sucesso")
+                    print(f"O processo {op['pid']} deletou o arquivo {op['filename']}.")
+                elif reason == 'not_found':
+                    print(f"Operação {i} => Falha")
+                    print(f"O processo {op['pid']} não pode deletar o arquivo {op['filename']} porque ele não existe.")
+                else:
+                    print(f"Operação {i} => Falha")
+                    print(f"O processo {op['pid']} não pode deletar o arquivo {op['filename']} (sem permissão).")
 
         # Relatórios Finais
         self.file_system.print_disk_map()
