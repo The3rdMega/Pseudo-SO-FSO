@@ -160,7 +160,50 @@ class Dispatcher:
         print(f" drives: {int(process.sata_req > 0)}")
         print(f"process {process.pid} =>")
         print(f"P{process.pid} STARTED")
-
+    
+    def _is_request_feasible(self, process: Process) -> bool:
+        """ Verifica se o processo exige mais hardware do que o sistema possui. """
+        # Limites físicos da especificação
+        return (process.printer_req <= 2 and
+                process.scanner_req <= 1 and
+                process.modem_req <= 1 and
+                process.sata_req <= 2)
+    
+    def _print_theoretical_page_faults(self) -> None:
+        """
+        Calcula e imprime as faltas de página teóricas como se cada processo
+        executasse sua string de referência inteira, isoladamente, validando o LRU.
+        """
+        print("\nNúmero de Faltas de Páginas por processo (Avaliação Estática / String Completa):")
+        
+        for p in self.processes:
+            if not p.reference_string:
+                print(f"P{p.pid} = 0 faltas de páginas")
+                continue
+                
+            faults = 0
+            mem = []
+            
+            # Pré-carga (1ª página é carregada sem gerar falta de página)
+            mem.append(p.reference_string[0])
+            
+            # Simula a passagem do restante da string pelo algoritmo LRU Local
+            for page in p.reference_string[1:]:
+                if page in mem:
+                    # Page Hit: Remove de onde está e coloca no final (Most Recently Used)
+                    mem.remove(page)
+                    mem.append(page)
+                else:
+                    # Page Fault
+                    faults += 1
+                    # Se a memória do processo (Working Set) estiver cheia, ejeta o LRU
+                    if len(mem) >= p.max_working_set:
+                        mem.pop(0) 
+                    
+                    mem.append(page)
+                    
+            print(f"P{p.pid} = {faults} faltas de páginas")
+    
     @staticmethod
     def _format_block_list(start_block: int, num_blocks: int) -> str:
         """Formata a lista de blocos no padrão 'blocos 0, 1 e 2'."""
@@ -190,7 +233,14 @@ class Dispatcher:
 
             if current_process:
                 # 3. Fase de Execução
-                if self.resources.request(current_process):
+                if not self._is_request_feasible(current_process):
+                    print(f"P{current_process.pid} ABORTADO: Requisição de hardware excede o limite físico.")
+                    self.memory.free_process(current_process)
+                    completed_processes += 1
+                    # Ao não chamar self.scheduler.preempt(), o processo é simplesmente
+                    # descartado da fila, e o código segue reto para o tick += 1
+                    
+                elif self.resources.request(current_process):
                     # Acesso à memória por instrução
                     if current_process.program_counter < len(current_process.reference_string):
                         current_page = current_process.reference_string[current_process.program_counter]
@@ -199,20 +249,20 @@ class Dispatcher:
                     current_process.program_counter += 1
                     current_process.cpu_time -= 1
                     print(f"P{current_process.pid} instruction {current_process.program_counter}")
-
+                    
                     # 4. Fase de Finalização ou Preempção
                     if current_process.cpu_time <= 0:
                         print(f"P{current_process.pid} return SIGINT")
                         self.memory.free_process(current_process)
-                        self.resources.release(current_process)
-                        self.scheduler.complete(current_process)
+                        self.resources.release(current_process) 
                         completed_processes += 1
                     else:
                         self.scheduler.preempt(current_process)
                 else:
-                    # Recursos indisponíveis: devolve à mesma fila sem rebaixar prioridade
-                    self.scheduler.requeue(current_process)
-
+                    # Bloqueio por inanição temporária (esperando recurso de outro processo)
+                    self.scheduler.preempt(current_process)
+            
+            # 5. Manutenção do Escalonador e Avanço do Relógio
             self.scheduler.update_wait_times_and_age()
             tick += 1
 
@@ -248,9 +298,15 @@ class Dispatcher:
 
         # Relatórios Finais
         self.file_system.print_disk_map()
-        print("\nNúmero de Faltas de Páginas por processo:")
+
+        # 1. Print da Realidade Dinâmica (Atrelada ao CPU Time)
+        print("\nNúmero de Faltas de Páginas por processo (Dinâmico):")
         for p in self.processes:
             print(f"P{p.pid} = {p.page_faults} faltas de páginas")
+        
+        # 2. Print do Validador de Estrutura (String Completa)
+        self._print_theoretical_page_faults()
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:

@@ -32,7 +32,7 @@ Cada linha define um processo. Os campos são separados por vírgula:
 - **prioridade**: `0` = tempo real (FIFO, sem preempção); `1`, `2` ou `3` = usuário
 - **tempo_de_cpu**: número de instruções que o processo executa
 - **tamanho_max_working_set**: número máximo de frames de memória que o processo pode usar
-- **impressora / scanner / modem / sata**: `1` se o processo requisita o dispositivo, `0` caso contrário
+- **impressora / scanner / modem / sata**: quantidade de instâncias requisitadas do dispositivo (ex: `2` para requerer duas impressoras). OBS: O print no terminal do processo abstrai o valor real de instâncias solicitadas e mostra 1 se o processo requisita o dispositivo, 0 caso contrário, apesar de a contagem interna utilizar (int).
 
 Exemplo:
 ```
